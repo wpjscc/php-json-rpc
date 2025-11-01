@@ -1,5 +1,5 @@
 {
-    "name": "hcs-llc/php-json-rpc",
+    "name": "wpjscc/php-json-rpc",
     "type": "library",
     "description": "A maintained fork of the datto/json-rpc package. Fully unit-tested JSON-RPC 2.0 for PHP.",
     "keywords": ["php", "json", "rpc", "jsonrpc", "json-rpc", "php-json-rpc"],
@@ -20,7 +20,8 @@
         }
     ],
     "require": {
-        "php": "^7.4 || ^8.0"
+        "php": "^7.4 || ^8.0",
+        "react/async": "^4.3"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.5"

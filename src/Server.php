@@ -26,6 +26,8 @@ namespace Datto\JsonRpc;
 
 use Datto\JsonRpc\Exceptions\Exception;
 use Datto\JsonRpc\Responses\ErrorResponse;
+use React\Async;
+use React\Promise;
 
 /**
  * @link http://www.jsonrpc.org/specification JSON-RPC 2.0 Specifications
@@ -144,21 +146,36 @@ class Server
      */
     private function processBatchRequests($input)
     {
-        $replies = array();
+        $promises = array();
 
         foreach ($input as $request) {
-            $reply = $this->processRequest($request);
-
-            if ($reply !== null) {
-                $replies[] = $reply;
+            $promise = $this->processRequestPromise($request);
+            if ($promise !== null) {
+                $promises[] = $promise;
             }
         }
+
+        if (count($promises) === 0) {
+            return null;
+        }
+
+        try {
+            $replies = Async\await(Promise\all($promises));
+        } catch (\Exception $exception) {
+            // Handle any errors that occurred during promise resolution
+            throw $exception;
+        }
+
+        // Filter out null replies (notifications)
+        $replies = array_filter($replies, function ($reply) {
+            return $reply !== null;
+        });
 
         if (count($replies) === 0) {
             return null;
         }
 
-        return $replies;
+        return array_values($replies);
     }
 
     /**
@@ -218,6 +235,62 @@ class Server
     }
 
     /**
+     * Processes an individual request, and prepares a Promise that resolves to the response.
+     *
+     * @param array $request
+     * Single request object to be processed.
+     *
+     * @return \React\Promise\PromiseInterface|null
+     * Returns a Promise that resolves to a response object or an error object.
+     * Returns null when no response is necessary (notification).
+     */
+    private function processRequestPromise($request)
+    {
+        if (!is_array($request)) {
+            return Promise\resolve($this->requestError());
+        }
+
+        // The presence of the 'id' key indicates that a response is expected
+        $isQuery = array_key_exists('id', $request);
+
+        $id = &$request['id'];
+
+        if (($id !== null) && !is_int($id) && !is_float($id) && !is_string($id)) {
+            return Promise\resolve($this->requestError());
+        }
+
+        $version = &$request['jsonrpc'];
+
+        if ($version !== self::VERSION) {
+            return Promise\resolve($this->requestError($id));
+        }
+
+        $method = &$request['method'];
+
+        if (!is_string($method)) {
+            return Promise\resolve($this->requestError($id));
+        }
+
+        // The 'params' key is optional, but must be non-null when provided
+        if (array_key_exists('params', $request)) {
+            $arguments = $request['params'];
+
+            if (!is_array($arguments)) {
+                return Promise\resolve($this->requestError($id));
+            }
+        } else {
+            $arguments = array();
+        }
+
+        if ($isQuery) {
+            return $this->processQueryPromise($id, $method, $arguments);
+        }
+
+        $this->processNotification($method, $arguments);
+        return null;
+    }
+
+    /**
      * Processes a query request and prepares the response.
      *
      * @param mixed $id
@@ -244,6 +317,60 @@ class Server
             $data = $exception->getData();
 
             return $this->error($id, $code, $message, $data);
+        }
+    }
+
+    /**
+     * Processes a query request and prepares a Promise that resolves to the response.
+     *
+     * @param mixed $id
+     * Client-supplied value that allows the client to associate the server response
+     * with the original query.
+     *
+     * @param string $method
+     * String value representing a method to invoke on the server.
+     *
+     * @param array $arguments
+     * Array of arguments that will be passed to the method.
+     *
+     * @return \React\Promise\PromiseInterface
+     * Returns a Promise that resolves to a response object or an error object.
+     */
+    private function processQueryPromise($id, $method, $arguments)
+    {
+        try {
+            $result = $this->evaluator->evaluate($method, $arguments);
+            
+            // If the result is a Promise, handle it; otherwise wrap it
+            if ($result instanceof \React\Promise\PromiseInterface) {
+                return $result->then(
+                    function ($resolvedResult) use ($id) {
+                        return $this->response($id, $resolvedResult);
+                    },
+                    function ($exception) use ($id) {
+                        if ($exception instanceof Exception) {
+                            $code = $exception->getCode();
+                            $message = $exception->getMessage();
+                            $data = $exception->getData();
+                            return $this->error($id, $code, $message, $data);
+                        }
+                        // For non-JSON-RPC exceptions, wrap them
+                        return $this->error($id, -32000, 'Internal error');
+                    }
+                );
+            } else {
+                // Result is not a Promise, wrap it in a resolved Promise
+                return Promise\resolve($this->response($id, $result));
+            }
+        } catch (Exception $exception) {
+            $code = $exception->getCode();
+            $message = $exception->getMessage();
+            $data = $exception->getData();
+
+            return Promise\resolve($this->error($id, $code, $message, $data));
+        } catch (\Exception $exception) {
+            // Handle non-JSON-RPC exceptions
+            return Promise\resolve($this->error($id, -32000, 'Internal error'));
         }
     }
 

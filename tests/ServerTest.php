@@ -292,6 +292,103 @@ class ServerTest extends TestCase
         $this->compare($input, $output);
     }
 
+    public function testBatchAsyncRequests()
+    {
+        $input = '[
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [10, 3], "id": "1"},
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [20, 5], "id": "2"},
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [15, 7], "id": "3"}
+        ]';
+
+        $output = '[
+            {"jsonrpc": "2.0", "id": "1", "result": 7},
+            {"jsonrpc": "2.0", "id": "2", "result": 15},
+            {"jsonrpc": "2.0", "id": "3", "result": 8}
+        ]';
+
+        $this->compare($input, $output);
+    }
+
+    public function testBatchMixedSyncAndAsync()
+    {
+        $input = '[
+            {"jsonrpc": "2.0", "method": "subtract", "params": [10, 3], "id": "1"},
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [20, 5], "id": "2"},
+            {"jsonrpc": "2.0", "method": "subtract", "params": [15, 7], "id": "3"}
+        ]';
+
+        $output = '[
+            {"jsonrpc": "2.0", "id": "1", "result": 7},
+            {"jsonrpc": "2.0", "id": "2", "result": 15},
+            {"jsonrpc": "2.0", "id": "3", "result": 8}
+        ]';
+
+        $this->compare($input, $output);
+    }
+
+    public function testBatchAsyncWithErrors()
+    {
+        $input = '[
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [10, 3], "id": "1"},
+            {"jsonrpc": "2.0", "method": "async_error", "params": ["details"], "id": "2"},
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [15, 7], "id": "3"}
+        ]';
+
+        $output = '[
+            {"jsonrpc": "2.0", "id": "1", "result": 7},
+            {"jsonrpc": "2.0", "id": "2", "error": {"code": -32099, "message": "Server error", "data": "details"}},
+            {"jsonrpc": "2.0", "id": "3", "result": 8}
+        ]';
+
+        $this->compare($input, $output);
+    }
+
+    public function testBatchAsyncWithApplicationError()
+    {
+        $input = '[
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [10, 3], "id": "1"},
+            {"jsonrpc": "2.0", "method": "async_application_error", "params": ["details"], "id": "2"}
+        ]';
+
+        $output = '[
+            {"jsonrpc": "2.0", "id": "1", "result": 7},
+            {"jsonrpc": "2.0", "id": "2", "error": {"code": 1, "message": "Application error", "data": "details"}}
+        ]';
+
+        $this->compare($input, $output);
+    }
+
+    public function testBatchAsyncWithNotifications()
+    {
+        $input = '[
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [10, 3], "id": "1"},
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [20, 5]},
+            {"jsonrpc": "2.0", "method": "subtract", "params": [15, 7], "id": "3"}
+        ]';
+
+        $output = '[
+            {"jsonrpc": "2.0", "id": "1", "result": 7},
+            {"jsonrpc": "2.0", "id": "3", "result": 8}
+        ]';
+
+        $this->compare($input, $output);
+    }
+
+    public function testBatchAsyncInvalidParams()
+    {
+        $input = '[
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [10, 3], "id": "1"},
+            {"jsonrpc": "2.0", "method": "async_subtract", "params": [], "id": "2"}
+        ]';
+
+        $output = '[
+            {"jsonrpc": "2.0", "id": "1", "result": 7},
+            {"jsonrpc": "2.0", "id": "2", "error": {"code": -32602, "message": "Invalid params"}}
+        ]';
+
+        $this->compare($input, $output);
+    }
+
     private function compare($input, $expectedJsonOutput)
     {
         $server = new Server(new Api());

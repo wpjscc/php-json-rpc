@@ -26,6 +26,7 @@ namespace Datto\JsonRpc\Tests;
 
 use Datto\JsonRpc\Evaluator;
 use Datto\JsonRpc\Exceptions;
+use React\Promise;
 
 class Api implements Evaluator
 {
@@ -46,6 +47,15 @@ class Api implements Evaluator
 
             case 'invalid application error':
                 return self::invalidApplicationError();
+
+            case 'async_subtract':
+                return self::asyncSubtract($arguments);
+
+            case 'async_error':
+                return self::asyncError($arguments);
+
+            case 'async_application_error':
+                return self::asyncApplicationError($arguments);
 
             default:
                 throw new Exceptions\MethodException();
@@ -90,5 +100,29 @@ class Api implements Evaluator
         $invalid = new \StdClass();
 
         throw new Exceptions\ApplicationException($invalid, $invalid, $invalid);
+    }
+
+    private static function asyncSubtract($arguments)
+    {
+        @list($a, $b) = $arguments;
+
+        if (!is_int($a) || !is_int($b) || (count($arguments) !== 2)) {
+            return Promise\reject(new Exceptions\ArgumentException());
+        }
+
+        // Return a resolved promise with the result
+        return Promise\resolve($a - $b);
+    }
+
+    private static function asyncError($arguments)
+    {
+        // Return a rejected promise with an implementation error
+        return Promise\reject(new Exceptions\ImplementationException(-32099, @$arguments[0]));
+    }
+
+    private static function asyncApplicationError($arguments)
+    {
+        // Return a rejected promise with an application error
+        return Promise\reject(new Exceptions\ApplicationException("Application error", 1, @$arguments[0]));
     }
 }
