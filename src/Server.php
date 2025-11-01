@@ -130,7 +130,12 @@ class Server
             return $this->processBatchRequests($input);
         }
 
-        return $this->processRequest($input);
+        $promise = $this->processRequest($input);
+        if ($promise === null) {
+            return null;
+        }
+
+        return Async\await($promise);
     }
 
     /**
@@ -149,7 +154,7 @@ class Server
         $promises = array();
 
         foreach ($input as $request) {
-            $promise = $this->processRequestPromise($request);
+            $promise = $this->processRequest($request);
             if ($promise !== null) {
                 $promises[] = $promise;
             }
@@ -159,12 +164,7 @@ class Server
             return null;
         }
 
-        try {
-            $replies = Async\await(Promise\all($promises));
-        } catch (\Exception $exception) {
-            // Handle any errors that occurred during promise resolution
-            throw $exception;
-        }
+        $replies = Async\await(Promise\all($promises));
 
         // Filter out null replies (notifications)
         $replies = array_filter($replies, function ($reply) {
@@ -179,62 +179,6 @@ class Server
     }
 
     /**
-     * Processes an individual request, and prepares the response.
-     *
-     * @param array $request
-     * Single request object to be processed.
-     *
-     * @return array|null
-     * Returns a response object or an error object.
-     * Returns null when no response is necessary.
-     */
-    private function processRequest($request)
-    {
-        if (!is_array($request)) {
-            return $this->requestError();
-        }
-
-        // The presence of the 'id' key indicates that a response is expected
-        $isQuery = array_key_exists('id', $request);
-
-        $id = &$request['id'];
-
-        if (($id !== null) && !is_int($id) && !is_float($id) && !is_string($id)) {
-            return $this->requestError();
-        }
-
-        $version = &$request['jsonrpc'];
-
-        if ($version !== self::VERSION) {
-            return $this->requestError($id);
-        }
-
-        $method = &$request['method'];
-
-        if (!is_string($method)) {
-            return $this->requestError($id);
-        }
-
-        // The 'params' key is optional, but must be non-null when provided
-        if (array_key_exists('params', $request)) {
-            $arguments = $request['params'];
-
-            if (!is_array($arguments)) {
-                return $this->requestError($id);
-            }
-        } else {
-            $arguments = array();
-        }
-
-        if ($isQuery) {
-            return $this->processQuery($id, $method, $arguments);
-        }
-
-        $this->processNotification($method, $arguments);
-        return null;
-    }
-
-    /**
      * Processes an individual request, and prepares a Promise that resolves to the response.
      *
      * @param array $request
@@ -244,7 +188,7 @@ class Server
      * Returns a Promise that resolves to a response object or an error object.
      * Returns null when no response is necessary (notification).
      */
-    private function processRequestPromise($request)
+    private function processRequest($request)
     {
         if (!is_array($request)) {
             return Promise\resolve($this->requestError());
@@ -288,36 +232,6 @@ class Server
 
         $this->processNotification($method, $arguments);
         return null;
-    }
-
-    /**
-     * Processes a query request and prepares the response.
-     *
-     * @param mixed $id
-     * Client-supplied value that allows the client to associate the server response
-     * with the original query.
-     *
-     * @param string $method
-     * String value representing a method to invoke on the server.
-     *
-     * @param array $arguments
-     * Array of arguments that will be passed to the method.
-     *
-     * @return array
-     * Returns a response object or an error object.
-     */
-    private function processQuery($id, $method, $arguments)
-    {
-        try {
-            $result = $this->evaluator->evaluate($method, $arguments);
-            return $this->response($id, $result);
-        } catch (Exception $exception) {
-            $code = $exception->getCode();
-            $message = $exception->getMessage();
-            $data = $exception->getData();
-
-            return $this->error($id, $code, $message, $data);
-        }
     }
 
     /**
